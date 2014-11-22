@@ -49,6 +49,7 @@ private:
     timeval GetTimestamp(const CBuffer& buffer) const;
     bool HasSeenTimestamp(const CString& identifier, const timeval& tv);
     bool UpdateTimestamp(const CString& identifier, const timeval& tv);
+    void UpdateTimestamp(const CClient* client);
 };
 
 void CClientBufferMod::OnAddClientCommand(const CString& line)
@@ -107,26 +108,13 @@ void CClientBufferMod::OnListClientsCommand(const CString&)
 
 CModule::EModRet CClientBufferMod::OnUserRaw(CString& line)
 {
-    CClient* client = GetClient();
-    if (client && client->IsReady()) {
-        const CString& identifier = client->GetIdentifier();
-        if (HasClient(identifier)) {
-            timeval tv;
-            gettimeofday(&tv, NULL);
-            UpdateTimestamp(identifier, tv);
-        }
-    }
+    UpdateTimestamp(GetClient());
     return CONTINUE;
 }
 
 CModule::EModRet CClientBufferMod::OnSendToClient(CString& line, CClient& client)
 {
-    const CString& identifier = client.GetIdentifier();
-    if (client.IsReady() && HasClient(identifier)) {
-        timeval tv;
-        gettimeofday(&tv, NULL);
-        UpdateTimestamp(identifier, tv);
-    }
+    UpdateTimestamp(&client);
     return CONTINUE;
 }
 
@@ -218,6 +206,18 @@ bool CClientBufferMod::UpdateTimestamp(const CString& identifier, const timeval&
         return SetNV(identifier, CString(timestamp));
     }
     return false;
+}
+
+void CClientBufferMod::UpdateTimestamp(const CClient* client)
+{
+    if (client && client->IsReady()) {
+        const CString& identifier = client->GetIdentifier();
+        if (HasClient(identifier)) {
+            timeval tv;
+            gettimeofday(&tv, NULL);
+            UpdateTimestamp(identifier, tv);
+        }
+    }
 }
 
 NETWORKMODULEDEFS(CClientBufferMod, "Client specific buffer playback")
