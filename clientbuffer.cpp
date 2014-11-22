@@ -32,6 +32,7 @@ public:
     void OnDelClientCommand(const CString& line);
     void OnListClientsCommand(const CString& = "");
 
+    virtual EModRet OnUserRaw(CString& line) override;
     virtual EModRet OnSendToClient(CString& line, CClient& client) override;
 
     virtual EModRet OnChanBufferStarting(CChan& chan, CClient& client) override;
@@ -102,6 +103,20 @@ void CClientBufferMod::OnListClientsCommand(const CString&)
         PutModule("No identified clients");
     else
         PutModule(table);
+}
+
+CModule::EModRet CClientBufferMod::OnUserRaw(CString& line)
+{
+    CClient* client = GetClient();
+    if (client && client->IsReady()) {
+        const CString& identifier = client->GetIdentifier();
+        if (HasClient(identifier)) {
+            timeval tv;
+            gettimeofday(&tv, NULL);
+            UpdateTimestamp(identifier, tv);
+        }
+    }
+    return CONTINUE;
 }
 
 CModule::EModRet CClientBufferMod::OnSendToClient(CString& line, CClient& client)
