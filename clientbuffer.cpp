@@ -30,7 +30,7 @@ public:
 
     void OnAddClientCommand(const CString& line);
     void OnDelClientCommand(const CString& line);
-    void OnListClientsCommand(const CString& = "");
+    void OnListClientsCommand(const CString& line);
 
     virtual EModRet OnUserRaw(CString& line) override;
     virtual EModRet OnSendToClient(CString& line, CClient& client) override;
@@ -82,7 +82,7 @@ void CClientBufferMod::OnDelClientCommand(const CString& line)
     PutModule("Client removed: " + identifier);
 }
 
-void CClientBufferMod::OnListClientsCommand(const CString&)
+void CClientBufferMod::OnListClientsCommand(const CString& line)
 {
     const CString& current = GetClient()->GetIdentifier();
 
