@@ -11,6 +11,7 @@
 #include <znc/Client.h>
 #include <znc/Utils.h>
 #include <znc/User.h>
+#include <znc/Chan.h>
 #include <znc/znc.h>
 #include <sys/time.h>
 
@@ -33,8 +34,10 @@ public:
 
     virtual EModRet OnSendToClient(CString& line, CClient& client) override;
 
-    virtual EModRet OnPrivBufferPlayLine(CClient& client, CString& line, const timeval& tv) override;
+    virtual EModRet OnChanBufferStarting(CChan& chan, CClient& client) override;
+    virtual EModRet OnChanBufferEnding(CChan& chan, CClient& client) override;
     virtual EModRet OnChanBufferPlayLine(CChan& chan, CClient& client, CString& line, const timeval& tv) override;
+    virtual EModRet OnPrivBufferPlayLine(CClient& client, CString& line, const timeval& tv) override;
 
 private:
     bool AddClient(const CString& identifier);
@@ -42,9 +45,9 @@ private:
     bool HasClient(const CString& identifier);
 
     timeval GetTimestamp(const CString& identifier);
+    timeval GetTimestamp(const CBuffer& buffer) const;
+    bool HasSeenTimestamp(const CString& identifier, const timeval& tv);
     bool UpdateTimestamp(const CString& identifier, const timeval& tv);
-
-    EModRet ProcessPlayLine(const CClient& client, const timeval& tv);
 };
 
 void CClientBufferMod::OnAddClientCommand(const CString& line)
@@ -112,14 +115,50 @@ CModule::EModRet CClientBufferMod::OnSendToClient(CString& line, CClient& client
     return CONTINUE;
 }
 
-CModule::EModRet CClientBufferMod::OnPrivBufferPlayLine(CClient& client, CString& line, const timeval& tv)
+CModule::EModRet CClientBufferMod::OnChanBufferStarting(CChan& chan, CClient& client)
 {
-    return ProcessPlayLine(client, tv);
+    if (client.HasServerTime())
+        return HALTCORE;
+
+    const CString& identifier = client.GetIdentifier();
+    if (!client.IsReady() && HasClient(identifier)) {
+        // let "Buffer Playback..." message through?
+        const CBuffer& buffer = chan.GetBuffer();
+        if (!buffer.IsEmpty() && HasSeenTimestamp(identifier, GetTimestamp(buffer)))
+            return HALTCORE;
+    }
+    return CONTINUE;
+}
+
+CModule::EModRet CClientBufferMod::OnChanBufferEnding(CChan& chan, CClient& client)
+{
+    if (client.HasServerTime())
+        return HALTCORE;
+
+    const CString& identifier = client.GetIdentifier();
+    if (!client.IsReady() && HasClient(identifier)) {
+        // let "Buffer Complete" message through?
+        const CBuffer& buffer = chan.GetBuffer();
+        if (!buffer.IsEmpty() && !UpdateTimestamp(identifier, GetTimestamp(buffer)))
+            return HALTCORE;
+    }
+    return CONTINUE;
 }
 
 CModule::EModRet CClientBufferMod::OnChanBufferPlayLine(CChan& chan, CClient& client, CString& line, const timeval& tv)
 {
-    return ProcessPlayLine(client, tv);
+    const CString& identifier = client.GetIdentifier();
+    if (!client.IsReady() && HasClient(identifier) && HasSeenTimestamp(identifier, tv))
+        return HALTCORE;
+    return CONTINUE;
+}
+
+CModule::EModRet CClientBufferMod::OnPrivBufferPlayLine(CClient& client, CString& line, const timeval& tv)
+{
+    const CString& identifier = client.GetIdentifier();
+    if (!client.IsReady() && HasClient(identifier) && !UpdateTimestamp(identifier, tv))
+        return HALTCORE;
+    return CONTINUE;
 }
 
 bool CClientBufferMod::AddClient(const CString& identifier)
@@ -146,22 +185,24 @@ timeval CClientBufferMod::GetTimestamp(const CString& identifier)
     return tv;
 }
 
+timeval CClientBufferMod::GetTimestamp(const CBuffer& buffer) const
+{
+    return buffer.GetBufLine(buffer.Size() - 1).GetTime();
+}
+
+bool CClientBufferMod::HasSeenTimestamp(const CString& identifier, const timeval& tv)
+{
+    const timeval seen = GetTimestamp(identifier);
+    return timercmp(&seen, &tv, >);
+}
+
 bool CClientBufferMod::UpdateTimestamp(const CString& identifier, const timeval& tv)
 {
-    const timeval old = GetTimestamp(identifier);
-    if (timercmp(&tv, &old, >)) {
+    if (!HasSeenTimestamp(identifier, tv)) {
         double timestamp = tv.tv_sec + tv.tv_usec / 1000000.0;
         return SetNV(identifier, CString(timestamp));
     }
     return false;
-}
-
-CModule::EModRet CClientBufferMod::ProcessPlayLine(const CClient& client, const timeval& tv)
-{
-    const CString& identifier = client.GetIdentifier();
-    if (!client.IsReady() && HasClient(identifier) && !UpdateTimestamp(identifier, tv))
-        return HALTCORE;
-    return CONTINUE;
 }
 
 NETWORKMODULEDEFS(CClientBufferMod, "Client specific buffer playback")
