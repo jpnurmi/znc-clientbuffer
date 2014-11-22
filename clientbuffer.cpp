@@ -33,8 +33,8 @@ public:
 
 	virtual EModRet OnSendToClient(CString& line, CClient& client) override;
 
-	virtual EModRet OnPrivBufferPlayLine(CClient& client, CString& line) override;
-	virtual EModRet OnChanBufferPlayLine(CChan& chan, CClient& client, CString& line) override;
+	virtual EModRet OnPrivBufferPlayLine(CClient& client, CString& line, const timeval& tv) override;
+	virtual EModRet OnChanBufferPlayLine(CChan& chan, CClient& client, CString& line, const timeval& tv) override;
 
 private:
 	bool AddClient(const CString& identifier);
@@ -42,9 +42,9 @@ private:
 	bool HasClient(const CString& identifier);
 
 	timeval GetTimestamp(const CString& identifier);
-	void UpdateTimestamp(const CString& identifier);
+	bool UpdateTimestamp(const CString& identifier, const timeval& tv);
 
-	EModRet ProcessMessage(const CClient& client, const CString& line);
+	EModRet ProcessPlayLine(const CClient& client, const timeval& tv);
 };
 
 void CClientBufferMod::OnAddClientCommand(const CString& line)
@@ -103,19 +103,23 @@ void CClientBufferMod::OnListClientsCommand(const CString&)
 
 CModule::EModRet CClientBufferMod::OnSendToClient(CString& line, CClient& client)
 {
-	if (client.IsReady() && HasClient(client.GetIdentifier()))
-		UpdateTimestamp(client.GetIdentifier());
+	const CString& identifier = client.GetIdentifier();
+	if (client.IsReady() && HasClient(identifier)) {
+		timeval tv;
+		gettimeofday(&tv, NULL);
+		UpdateTimestamp(identifier, tv);
+	}
 	return CONTINUE;
 }
 
-CModule::EModRet CClientBufferMod::OnPrivBufferPlayLine(CClient& client, CString& line)
+CModule::EModRet CClientBufferMod::OnPrivBufferPlayLine(CClient& client, CString& line, const timeval& tv)
 {
-	return ProcessMessage(client, line);
+	return ProcessPlayLine(client, tv);
 }
 
-CModule::EModRet CClientBufferMod::OnChanBufferPlayLine(CChan& chan, CClient& client, CString& line)
+CModule::EModRet CClientBufferMod::OnChanBufferPlayLine(CChan& chan, CClient& client, CString& line, const timeval& tv)
 {
-	return ProcessMessage(client, line);
+	return ProcessPlayLine(client, tv);
 }
 
 bool CClientBufferMod::AddClient(const CString& identifier)
@@ -138,40 +142,26 @@ timeval CClientBufferMod::GetTimestamp(const CString& identifier)
 	timeval tv;
 	double timestamp = GetNV(identifier).ToDouble();
 	tv.tv_sec = timestamp;
-	tv.tv_usec = (timestamp - tv.tv_sec) * 1000;
+	tv.tv_usec = (timestamp - tv.tv_sec) * 1000000;
 	return tv;
 }
 
-void CClientBufferMod::UpdateTimestamp(const CString& identifier)
+bool CClientBufferMod::UpdateTimestamp(const CString& identifier, const timeval& tv)
 {
-	timeval tv;
-	gettimeofday(&tv, NULL);
-	double timestamp = tv.tv_sec + tv.tv_usec / 1000.0;
-	SetNV(identifier, CString(timestamp));
+	const timeval old = GetTimestamp(identifier);
+	if (timercmp(&tv, &old, >)) {
+		double timestamp = tv.tv_sec + tv.tv_usec / 1000000.0;
+		return SetNV(identifier, CString(timestamp));
+	}
+	return false;
 }
 
-static time_t ParseTimestamp(const CString& timestamp, const CString& format)
-{
-	struct tm tm;
-	memset(&tm, 0, sizeof(struct tm));
-	strptime(timestamp.c_str(), format.c_str(), &tm);
-	return mktime(&tm);
-}
-
-CModule::EModRet CClientBufferMod::ProcessMessage(const CClient& client, const CString& line)
+CModule::EModRet CClientBufferMod::ProcessPlayLine(const CClient& client, const timeval& tv)
 {
 	const CString& identifier = client.GetIdentifier();
-	if (client.HasServerTime() && HasClient(identifier)) {
-		const timeval tv = GetTimestamp(identifier);
-		const MCString tags = CUtils::GetMessageTags(line);
-		MCString::const_iterator it = tags.find("time");
-		if (it != tags.end()) {
-			time_t tt = ParseTimestamp(it->second, ServerTimeFormat);
-			if (tv.tv_sec < tt)
-				return CModule::HALT;
-		}
-	}
-	return CModule::CONTINUE;
+	if (!client.IsReady() && HasClient(identifier) && !UpdateTimestamp(identifier, tv))
+		return HALTCORE;
+	return CONTINUE;
 }
 
 NETWORKMODULEDEFS(CClientBufferMod, "Client specific buffer playback")
