@@ -15,8 +15,6 @@
 #include <znc/znc.h>
 #include <sys/time.h>
 
-static const char* ServerTimeFormat = "%Y-%m-%dT%H:%M:%S";
-
 class CClientBufferMod : public CModule
 {
 public:
@@ -37,19 +35,20 @@ public:
 
     virtual EModRet OnChanBufferStarting(CChan& chan, CClient& client) override;
     virtual EModRet OnChanBufferEnding(CChan& chan, CClient& client) override;
-    virtual EModRet OnChanBufferPlayLine(CChan& chan, CClient& client, CString& line, const timeval& tv) override;
-    virtual EModRet OnPrivBufferPlayLine(CClient& client, CString& line, const timeval& tv) override;
+    virtual EModRet OnChanBufferPlayLine2(CChan& chan, CClient& client, CString& line, const timeval& tv) override;
+    virtual EModRet OnPrivBufferPlayLine2(CClient& client, CString& line, const timeval& tv) override;
 
 private:
     bool AddClient(const CString& identifier);
     bool DelClient(const CString& identifier);
     bool HasClient(const CString& identifier);
 
-    timeval GetTimestamp(const CString& identifier);
+    bool ParseMessage(const CString& line, CNick& nick, CString& cmd, CString& target) const;
+    timeval GetTimestamp(const CString& identifier, const CString& target);
     timeval GetTimestamp(const CBuffer& buffer) const;
-    bool HasSeenTimestamp(const CString& identifier, const timeval& tv);
-    bool UpdateTimestamp(const CString& identifier, const timeval& tv);
-    void UpdateTimestamp(const CClient* client);
+    bool HasSeenTimestamp(const CString& identifier, const CString& target, const timeval& tv);
+    bool UpdateTimestamp(const CString& identifier, const CString& target, const timeval& tv);
+    void UpdateTimestamp(const CClient* client, const CString& target);
 };
 
 void CClientBufferMod::OnAddClientCommand(const CString& line)
@@ -89,15 +88,16 @@ void CClientBufferMod::OnListClientsCommand(const CString& line)
     CTable table;
     table.AddColumn("Client");
     table.AddColumn("Connected");
-    table.AddColumn("Last seen message");
+
     for (MCString::iterator it = BeginNV(); it != EndNV(); ++it) {
-        table.AddRow();
-        if (it->first == current)
-            table.SetCell("Client",  "*" + it->first);
-        else
-            table.SetCell("Client",  it->first);
-        table.SetCell("Connected", CString(!GetNetwork()->FindClients(it->first).empty()));
-        table.SetCell("Last seen message", CUtils::FormatTime(GetTimestamp(it->first).tv_sec, ServerTimeFormat, ""));
+        if (it->first.Find("/") == CString::npos) {
+            table.AddRow();
+            if (it->first == current)
+                table.SetCell("Client",  "*" + it->first);
+            else
+                table.SetCell("Client",  it->first);
+            table.SetCell("Connected", CString(!GetNetwork()->FindClients(it->first).empty()));
+        }
     }
 
     if (table.empty())
@@ -108,13 +108,28 @@ void CClientBufferMod::OnListClientsCommand(const CString& line)
 
 CModule::EModRet CClientBufferMod::OnUserRaw(CString& line)
 {
-    UpdateTimestamp(GetClient());
+    CClient* client = GetClient();
+    if (client) {
+        CNick nick; CString cmd, target;
+        // make sure not to update the timestamp for a channel when joining it
+        if (ParseMessage(line, nick, cmd, target) && !cmd.Equals("JOIN"))
+            UpdateTimestamp(client, target);
+    }
     return CONTINUE;
 }
 
 CModule::EModRet CClientBufferMod::OnSendToClient(CString& line, CClient& client)
 {
-    UpdateTimestamp(&client);
+    CIRCNetwork* network = GetNetwork();
+    if (network) {
+        CNick nick; CString cmd, target;
+        // make sure not to update the timestamp for a channel when attaching it
+        if (ParseMessage(line, nick, cmd, target)) {
+            CChan* chan = network->FindChan(target);
+            if (!chan || !chan->IsDetached())
+                UpdateTimestamp(&client, target);
+        }
+    }
     return CONTINUE;
 }
 
@@ -124,10 +139,10 @@ CModule::EModRet CClientBufferMod::OnChanBufferStarting(CChan& chan, CClient& cl
         return HALTCORE;
 
     const CString& identifier = client.GetIdentifier();
-    if (!client.IsReady() && HasClient(identifier)) {
+    if (HasClient(identifier)) {
         // let "Buffer Playback..." message through?
         const CBuffer& buffer = chan.GetBuffer();
-        if (!buffer.IsEmpty() && HasSeenTimestamp(identifier, GetTimestamp(buffer)))
+        if (!buffer.IsEmpty() && HasSeenTimestamp(identifier, chan.GetName(), GetTimestamp(buffer)))
             return HALTCORE;
     }
     return CONTINUE;
@@ -139,39 +154,51 @@ CModule::EModRet CClientBufferMod::OnChanBufferEnding(CChan& chan, CClient& clie
         return HALTCORE;
 
     const CString& identifier = client.GetIdentifier();
-    if (!client.IsReady() && HasClient(identifier)) {
+    if (HasClient(identifier)) {
         // let "Buffer Complete" message through?
         const CBuffer& buffer = chan.GetBuffer();
-        if (!buffer.IsEmpty() && !UpdateTimestamp(identifier, GetTimestamp(buffer)))
+        if (!buffer.IsEmpty() && !UpdateTimestamp(identifier, chan.GetName(), GetTimestamp(buffer)))
             return HALTCORE;
     }
     return CONTINUE;
 }
 
-CModule::EModRet CClientBufferMod::OnChanBufferPlayLine(CChan& chan, CClient& client, CString& line, const timeval& tv)
+CModule::EModRet CClientBufferMod::OnChanBufferPlayLine2(CChan& chan, CClient& client, CString& line, const timeval& tv)
 {
     const CString& identifier = client.GetIdentifier();
-    if (!client.IsReady() && HasClient(identifier) && HasSeenTimestamp(identifier, tv))
+    if (HasClient(identifier) && HasSeenTimestamp(identifier, chan.GetName(), tv))
         return HALTCORE;
     return CONTINUE;
 }
 
-CModule::EModRet CClientBufferMod::OnPrivBufferPlayLine(CClient& client, CString& line, const timeval& tv)
+CModule::EModRet CClientBufferMod::OnPrivBufferPlayLine2(CClient& client, CString& line, const timeval& tv)
 {
     const CString& identifier = client.GetIdentifier();
-    if (!client.IsReady() && HasClient(identifier) && !UpdateTimestamp(identifier, tv))
-        return HALTCORE;
+    if (HasClient(identifier)) {
+        CNick nick; CString cmd, target;
+        if (ParseMessage(line, nick, cmd, target) && !UpdateTimestamp(identifier, target, tv))
+            return HALTCORE;
+    }
     return CONTINUE;
 }
 
 bool CClientBufferMod::AddClient(const CString& identifier)
 {
-    return SetNV(identifier, GetNV(identifier));
+    return SetNV(identifier, "");
 }
 
 bool CClientBufferMod::DelClient(const CString& identifier)
 {
-    return DelNV(identifier);
+    SCString keys;
+    for (MCString::iterator it = BeginNV(); it != EndNV(); ++it) {
+        const CString client = it->first.Token(0, false, "/");
+        if (client.Equals(identifier))
+            keys.insert(it->first);
+    }
+    bool success = true;
+    for (const CString& key : keys)
+        success &= DelNV(key);
+    return success;
 }
 
 bool CClientBufferMod::HasClient(const CString& identifier)
@@ -179,10 +206,42 @@ bool CClientBufferMod::HasClient(const CString& identifier)
     return !identifier.empty() && FindNV(identifier) != EndNV();
 }
 
-timeval CClientBufferMod::GetTimestamp(const CString& identifier)
+bool CClientBufferMod::ParseMessage(const CString& line, CNick& nick, CString& cmd, CString& target) const
+{
+    // discard message tags
+    CString msg = line;
+    if (msg.StartsWith("@"))
+        msg = msg.Token(1, true);
+
+    CString rest;
+    if (msg.StartsWith(":")) {
+        nick = CNick(msg.Token(0).TrimPrefix_n());
+        cmd = msg.Token(1);
+        rest = msg.Token(2, true);
+    } else {
+        cmd = msg.Token(0);
+        rest = msg.Token(1, true);
+    }
+
+    if (cmd.length() == 3 && isdigit(cmd[0]) && isdigit(cmd[1]) && isdigit(cmd[2])) {
+        // must block the following numeric replies that are automatically sent on attach:
+        // RPL_NAMREPLY, RPL_ENDOFNAMES, RPL_TOPIC, RPL_TOPICWHOTIME...
+        unsigned int num = cmd.ToUInt();
+        if (num == 353) // RPL_NAMREPLY
+            target = rest.Token(2);
+        else
+            target = rest.Token(1);
+    } else if (cmd.Equals("PRIVMSG") || cmd.Equals("NOTICE") || cmd.Equals("JOIN") || cmd.Equals("PART") || cmd.Equals("MODE") || cmd.Equals("KICK") || cmd.Equals("TOPIC")) {
+        target = rest.Token(0).TrimPrefix_n(":");
+    }
+
+    return !target.empty() && !cmd.empty();
+}
+
+timeval CClientBufferMod::GetTimestamp(const CString& identifier, const CString& target)
 {
     timeval tv;
-    double timestamp = GetNV(identifier).ToDouble();
+    double timestamp = GetNV(identifier + "/" + target).ToDouble();
     tv.tv_sec = timestamp;
     tv.tv_usec = (timestamp - tv.tv_sec) * 1000000;
     return tv;
@@ -193,29 +252,29 @@ timeval CClientBufferMod::GetTimestamp(const CBuffer& buffer) const
     return buffer.GetBufLine(buffer.Size() - 1).GetTime();
 }
 
-bool CClientBufferMod::HasSeenTimestamp(const CString& identifier, const timeval& tv)
+bool CClientBufferMod::HasSeenTimestamp(const CString& identifier, const CString& target, const timeval& tv)
 {
-    const timeval seen = GetTimestamp(identifier);
+    const timeval seen = GetTimestamp(identifier, target);
     return timercmp(&seen, &tv, >);
 }
 
-bool CClientBufferMod::UpdateTimestamp(const CString& identifier, const timeval& tv)
+bool CClientBufferMod::UpdateTimestamp(const CString& identifier, const CString& target, const timeval& tv)
 {
-    if (!HasSeenTimestamp(identifier, tv)) {
+    if (!HasSeenTimestamp(identifier, target, tv)) {
         double timestamp = tv.tv_sec + tv.tv_usec / 1000000.0;
-        return SetNV(identifier, CString(timestamp));
+        return SetNV(identifier + "/" + target, CString(timestamp));
     }
     return false;
 }
 
-void CClientBufferMod::UpdateTimestamp(const CClient* client)
+void CClientBufferMod::UpdateTimestamp(const CClient* client, const CString& target)
 {
-    if (client && client->IsReady()) {
+    if (client && !client->IsPlaybackActive()) {
         const CString& identifier = client->GetIdentifier();
         if (HasClient(identifier)) {
             timeval tv;
             gettimeofday(&tv, NULL);
-            UpdateTimestamp(identifier, tv);
+            UpdateTimestamp(identifier, target, tv);
         }
     }
 }
