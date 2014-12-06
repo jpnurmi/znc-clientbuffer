@@ -1,18 +1,13 @@
-znc-clientbuffer
-================
+Client specific buffers for ZNC
+===============================
 
-### Overview
-
-WIP: ZNC module for client specific buffers
+The client buffer module maintains client specific buffers for identified clients.
 
 ### Configuration
 
-    AutoClearChanBuffer = false
-    AutoClearQueryBuffer = false
+In order to make it possible for the module to control client specific buffers, you must disable the `AutoClearQueryBuffer` and `AutoClearQueryBuffer` config options that are enabled by default. This can be done via controlpanel, webadmin, or znc.conf.
 
-### Usage
-
-Module commands to manage identified clients:
+### Commands
 
     /msg *chanfilter addclient <identifier>
     /msg *chanfilter delclient <identifier>
