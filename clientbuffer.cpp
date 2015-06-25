@@ -43,6 +43,8 @@ public:
     void OnDelClientCommand(const CString& line);
     void OnListClientsCommand(const CString& line);
 
+    virtual void OnClientLogin();
+
     virtual EModRet OnUserRaw(CString& line) override;
     virtual EModRet OnSendToClient(CString& line, CClient& client) override;
 
@@ -117,6 +119,15 @@ void CClientBufferMod::OnListClientsCommand(const CString& line)
         PutModule("No identified clients");
     else
         PutModule(table);
+}
+
+void CClientBufferMod::OnClientLogin()
+{
+    const CString& current = GetClient()->GetIdentifier();
+
+    if (!HasClient(current) && GetArgs().Token(0).Equals("autoadd", CString::CaseInsensitive)) {
+        AddClient(current);
+    }
 }
 
 CModule::EModRet CClientBufferMod::OnUserRaw(CString& line)
@@ -290,6 +301,11 @@ void CClientBufferMod::UpdateTimestamp(const CClient* client, const CString& tar
             UpdateTimestamp(identifier, target, tv);
         }
     }
+}
+
+template<> void TModInfo<CClientBufferMod>(CModInfo& info) {
+	info.SetWikiPage("Clientbuffer");
+	info.SetHasArgs(true);
 }
 
 NETWORKMODULEDEFS(CClientBufferMod, "Client specific buffer playback")
