@@ -21,7 +21,12 @@
 #include <znc/User.h>
 #include <znc/Chan.h>
 #include <znc/znc.h>
+#include <znc/version.h>
 #include <sys/time.h>
+
+#if (VERSION_MAJOR < 1) || (VERSION_MAJOR == 1 && VERSION_MINOR < 6)
+#error The clientbuffer module requires ZNC version 1.6.0 or later.
+#endif
 
 class CClientBufferMod : public CModule
 {
