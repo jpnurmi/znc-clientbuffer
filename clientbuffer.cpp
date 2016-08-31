@@ -23,6 +23,7 @@
 #include <znc/znc.h>
 #include <znc/version.h>
 #include <sys/time.h>
+#include <cstdio>
 
 #if (VERSION_MAJOR < 1) || (VERSION_MAJOR == 1 && VERSION_MINOR < 6)
 #error The clientbuffer module requires ZNC version 1.6.0 or later.
@@ -59,6 +60,7 @@ private:
     bool HasClient(const CString& identifier);
 
     bool ParseMessage(const CString& line, CNick& nick, CString& cmd, CString& target) const;
+    bool SetTimestamp(const CString& identifier, const CString& target, const timeval& tv);
     timeval GetTimestamp(const CString& identifier, const CString& target);
     timeval GetTimestamp(const CBuffer& buffer) const;
     bool HasSeenTimestamp(const CString& identifier, const CString& target, const timeval& tv);
@@ -206,6 +208,7 @@ CModule::EModRet CClientBufferMod::OnPrivBufferPlayLine2(CClient& client, CStrin
     return CONTINUE;
 }
 
+// returns true if the new client was successfully written to disk
 bool CClientBufferMod::AddClient(const CString& identifier)
 {
     return SetNV(identifier, "");
@@ -262,12 +265,19 @@ bool CClientBufferMod::ParseMessage(const CString& line, CNick& nick, CString& c
     return !target.empty() && !cmd.empty();
 }
 
+// returns true if the new timestamp was successfully written to disk
+bool CClientBufferMod::SetTimestamp(const CString& identifier, const CString& target, const timeval& tv)
+{
+    char timestamp[32];
+    std::snprintf(timestamp, 32, "%ld.%06ld", tv.tv_sec, tv.tv_usec);
+    return SetNV(identifier + "/" + target, timestamp);
+}
+
 timeval CClientBufferMod::GetTimestamp(const CString& identifier, const CString& target)
 {
     timeval tv;
-    double timestamp = GetNV(identifier + "/" + target).ToDouble();
-    tv.tv_sec = timestamp;
-    tv.tv_usec = (timestamp - tv.tv_sec) * 1000000;
+    CString timestamp = GetNV(identifier + "/" + target);
+    std::sscanf(timestamp.c_str(), "%ld.%06ld", &tv.tv_sec, &tv.tv_usec);
     return tv;
 }
 
@@ -279,16 +289,15 @@ timeval CClientBufferMod::GetTimestamp(const CBuffer& buffer) const
 bool CClientBufferMod::HasSeenTimestamp(const CString& identifier, const CString& target, const timeval& tv)
 {
     const timeval seen = GetTimestamp(identifier, target);
-    return timercmp(&seen, &tv, >);
+    return timercmp(&seen, &tv, >=);
 }
 
 bool CClientBufferMod::UpdateTimestamp(const CString& identifier, const CString& target, const timeval& tv)
 {
-    if (!HasSeenTimestamp(identifier, target, tv)) {
-        double timestamp = tv.tv_sec + tv.tv_usec / 1000000.0;
-        return SetNV(identifier + "/" + target, CString(timestamp));
-    }
-    return false;
+    bool seen = HasSeenTimestamp(identifier, target, tv);
+    if (!seen)
+        SetTimestamp(identifier, target, tv);
+    return !seen;
 }
 
 void CClientBufferMod::UpdateTimestamp(const CClient* client, const CString& target)
@@ -298,7 +307,7 @@ void CClientBufferMod::UpdateTimestamp(const CClient* client, const CString& tar
         if (HasClient(identifier)) {
             timeval tv;
             gettimeofday(&tv, NULL);
-            UpdateTimestamp(identifier, target, tv);
+            SetTimestamp(identifier, target, tv);
         }
     }
 }
