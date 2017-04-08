@@ -43,7 +43,7 @@ public:
     void OnDelClientCommand(const CString& line);
     void OnListClientsCommand(const CString& line);
 
-    virtual void OnClientLogin();
+    virtual void OnClientLogin() override;
 
     virtual EModRet OnUserRaw(CString& line) override;
     virtual EModRet OnSendToClient(CString& line, CClient& client) override;
