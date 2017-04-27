@@ -163,12 +163,14 @@ CModule::EModRet CClientBufferMod::OnChanBufferStarting(CChan& chan, CClient& cl
         return HALTCORE;
 
     const CString& identifier = client.GetIdentifier();
-    if (HasClient(identifier)) {
-        // let "Buffer Playback..." message through?
-        const CBuffer& buffer = chan.GetBuffer();
-        if (!buffer.IsEmpty() && HasSeenTimestamp(identifier, chan.GetName(), GetTimestamp(buffer)))
-            return HALTCORE;
-    }
+    if (!HasClient(identifier))
+        return HALTCORE;
+
+    // let "Buffer Playback..." message through?
+    const CBuffer& buffer = chan.GetBuffer();
+    if (!buffer.IsEmpty() && HasSeenTimestamp(identifier, chan.GetName(), GetTimestamp(buffer)))
+        return HALTCORE;
+
     return CONTINUE;
 }
 
@@ -178,31 +180,39 @@ CModule::EModRet CClientBufferMod::OnChanBufferEnding(CChan& chan, CClient& clie
         return HALTCORE;
 
     const CString& identifier = client.GetIdentifier();
-    if (HasClient(identifier)) {
-        // let "Buffer Complete" message through?
-        const CBuffer& buffer = chan.GetBuffer();
-        if (!buffer.IsEmpty() && !UpdateTimestamp(identifier, chan.GetName(), GetTimestamp(buffer)))
-            return HALTCORE;
-    }
+    if (!HasClient(identifier))
+        return HALTCORE;
+
+    // let "Buffer Complete" message through?
+    const CBuffer& buffer = chan.GetBuffer();
+    if (!buffer.IsEmpty() && !UpdateTimestamp(identifier, chan.GetName(), GetTimestamp(buffer)))
+        return HALTCORE;
+
     return CONTINUE;
 }
 
 CModule::EModRet CClientBufferMod::OnChanBufferPlayLine2(CChan& chan, CClient& client, CString& line, const timeval& tv)
 {
     const CString& identifier = client.GetIdentifier();
-    if (HasClient(identifier) && HasSeenTimestamp(identifier, chan.GetName(), tv))
+    if (!HasClient(identifier))
         return HALTCORE;
+
+    if (HasSeenTimestamp(identifier, chan.GetName(), tv))
+        return HALTCORE;
+
     return CONTINUE;
 }
 
 CModule::EModRet CClientBufferMod::OnPrivBufferPlayLine2(CClient& client, CString& line, const timeval& tv)
 {
     const CString& identifier = client.GetIdentifier();
-    if (HasClient(identifier)) {
-        CNick nick; CString cmd, target;
-        if (ParseMessage(line, nick, cmd, target) && !UpdateTimestamp(identifier, target, tv))
-            return HALTCORE;
-    }
+    if (!HasClient(identifier))
+        return HALTCORE;
+
+    CNick nick; CString cmd, target;
+    if (ParseMessage(line, nick, cmd, target) && !UpdateTimestamp(identifier, target, tv))
+        return HALTCORE;
+
     return CONTINUE;
 }
 
